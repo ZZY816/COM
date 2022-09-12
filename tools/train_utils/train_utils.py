@@ -146,7 +146,10 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 train_loader.dataset.data_augmentor.data_augmentor_queue[0].epoch = cur_epoch
 
             if type(model.module_list[-1]).__name__ == 'CenterHead':
-                model.module_list[-1].epoch = cur_epoch
+                try:
+                    model.module_list[-1].epoch = cur_epoch
+                except:
+                    model.module.module_list[-1].epoch = cur_epoch
 
 
 

@@ -391,13 +391,10 @@ class WaymoDataset(DatasetTemplate):
                 min_points = self.dataset_cfg.get('MIN_POINTS', None)
 
                 if min_points is not None:
-                    print('valid')
-                    print(min_points)
-                    mask = (annos['num_points_in_gt'] > min_points)
+                    mask = (annos['num_points_in_gt'] >= min_points)
                 else:
                     mask = (annos['num_points_in_gt'] > 0)  # filter empty boxes
-                    print('invalid')
-                exit()
+
                 annos['name'] = annos['name'][mask]
                 gt_boxes_lidar = gt_boxes_lidar[mask]
                 annos['num_points_in_gt'] = annos['num_points_in_gt'][mask]
@@ -413,7 +410,13 @@ class WaymoDataset(DatasetTemplate):
         data_dict = self.prepare_data(data_dict=input_dict)
         data_dict['metadata'] = info.get('metadata', info['frame_id'])
 
-        data_dict.pop('num_points_in_gt', None)
+
+
+
+        if self.dataset_cfg.get('DISABLE_NPGT', True):
+            data_dict.pop('num_points_in_gt', None)
+        else:
+            input_dict['num_points_in_gt'] = np.array(input_dict['num_points_in_gt'])
 
 
         return data_dict

@@ -217,6 +217,14 @@ class DatasetTemplate(torch_data.Dataset):
                         batch_gt_boxes3d[k, :val[k].__len__(), :] = val[k]
                     ret[key] = batch_gt_boxes3d
 
+                elif key in ['num_points_in_gt']:
+                    max_num = max([x.shape[0] for x in val])
+                    num_points_in_gt = np.zeros((batch_size, max_num))
+                    for k in range(batch_size):
+                        num_points_in_gt[k, :val[k].__len__()] = val[k]
+
+                    ret[key] = num_points_in_gt
+
                 elif key in ['roi_boxes']:
                     max_gt = max([x.shape[1] for x in val])
                     batch_gt_boxes3d = np.zeros((batch_size, val[0].shape[0], max_gt, val[0].shape[-1]), dtype=np.float32)
