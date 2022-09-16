@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from . import box_utils
-
+from ..models.model_utils import centernet_utils
 
 class SigmoidFocalClassificationLoss(nn.Module):
     """
@@ -261,6 +261,81 @@ def compute_fg_mask(gt_boxes2d, shape, downsample_factor=1, device=torch.device(
     return fg_mask
 
 
+def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
+    """
+    Refer to https://github.com/tianweiy/CenterPoint.
+    Modified focal loss. Exactly the same as CornerNet. Runs faster and costs a little bit more memory
+    Args:
+        pred: (batch x c x h x w)
+        gt: (batch x c x h x w)
+        mask: (batch x h x w)
+    Returns:
+    """
+
+
+
+
+    pos_inds = gt.eq(1).float()
+    neg_inds = gt.lt(1).float()
+
+    batch_size = pos_inds.shape[0]
+
+    neg_weights = torch.pow(1 - gt, 4)
+
+    loss = 0
+
+    pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
+    neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
+
+
+    num_obj = pos_inds.float().sum()
+    avg_confidence = (pred * pos_inds).sum() / num_obj # the average prediction confidence of all objects in this head
+    print(avg_confidence)
+    num_objects = 0
+    for batch in range(batch_size):
+        nonzero_idx = torch.where(radius_map[batch][:, 3] > 0)[0]  # non-zero index of the objects in current batch
+        for i in nonzero_idx:
+            idx = i.item()
+            cur_class_id = radius_map[batch, idx, 0].item()     # the class of current object
+            center_x = radius_map[batch, idx, 1].item()         # the center x of current object
+            center_y = radius_map[batch, idx, 2].item()         # the center y of current object
+            center = (center_x, center_y)
+            radius = radius_map[batch, idx, 3].item()           # the radius of the gaussian circle of current object
+
+            pred_confidence = pred[batch, cur_class_id, center_y, center_x]   # the prediction confidence of current object. Pay attention to the order of x and y.
+            assert pos_inds[batch, cur_class_id, center_y, center_x] == 1
+            if pred_confidence.item() < avg_confidence.item():
+                box_mask[batch, idx] = 0.5  # change the weight for bbox regression
+                centernet_utils.draw_mask_to_heatmap(mask[batch, cur_class_id], center, radius, k=1) # draw weight mask for current object
+                assert mask[batch, cur_class_id, center_y, center_x] == 1
+            else:
+                assert mask[batch, cur_class_id, center_y, center_x] == 1
+            num_objects += 1
+    #print(num_objects, num_obj)
+    #assert num_objects == num_obj
+
+
+
+    if mask is not None:
+        mask = mask[:, None, :, :].float()
+        pos_loss = pos_loss * mask
+        neg_loss = neg_loss * mask
+        num_pos = (pos_inds.float() * mask).sum()
+    else:
+        num_pos = pos_inds.float().sum()
+
+    pos_loss = pos_loss.sum()
+    neg_loss = neg_loss.sum()
+
+
+
+    if num_pos == 0:
+        loss = loss - neg_loss
+    else:
+        loss = loss - (pos_loss + neg_loss) / num_pos
+    return loss, box_mask
+
+
 def neg_loss_cornernet(pred, gt, mask=None):
     """
     Refer to https://github.com/tianweiy/CenterPoint.
@@ -292,11 +367,16 @@ def neg_loss_cornernet(pred, gt, mask=None):
     pos_loss = pos_loss.sum()
     neg_loss = neg_loss.sum()
 
+    confidence = (pred*pos_inds).sum()/num_pos
+    # print('Current thredhold is: ', thredhold)
+    #print('pos_position', pred[gt.eq(1)])
+
+
     if num_pos == 0:
         loss = loss - neg_loss
     else:
         loss = loss - (pos_loss + neg_loss) / num_pos
-    return loss
+    return loss, confidence
 
 
 class FocalLossCenterNet(nn.Module):
@@ -311,6 +391,18 @@ class FocalLossCenterNet(nn.Module):
         return self.neg_loss(out, target, mask=mask)
 
 
+class FocalLossCenterCurriculum(nn.Module):
+    """
+    Refer to https://github.com/tianweiy/CenterPoint
+    """
+    def __init__(self):
+        super(FocalLossCenterCurriculum, self).__init__()
+        self.neg_loss = neg_loss_curriculum
+
+    def forward(self, out, target, radius_map, box_mask, mask=None):
+        return self.neg_loss(out, target, radius_map, box_mask, mask=mask)
+
+
 def _reg_loss(regr, gt_regr, mask):
     """
     Refer to https://github.com/tianweiy/CenterPoint
@@ -323,8 +415,10 @@ def _reg_loss(regr, gt_regr, mask):
     """
     num = mask.float().sum()
     mask = mask.unsqueeze(2).expand_as(gt_regr).float()
-    isnotnan = (~ torch.isnan(gt_regr)).float()
-    mask *= isnotnan
+
+    # isnotnan = (~ torch.isnan(gt_regr)).float() # TODO: should it be exist?
+    # mask *= isnotnan
+
     regr = regr * mask
     gt_regr = gt_regr * mask
 

@@ -6,6 +6,43 @@ import numpy as np
 import numba
 
 
+
+def draw_curriculum_mask(heatmap, center, radius, curriculum=1, k=1):
+    """Get gaussian masked heatmap.
+
+    Args:
+        heatmap (torch.Tensor): Heatmap to be masked.
+        center (torch.Tensor): Center coord of the heatmap.
+        radius (int): Radius of gaussian.
+        K (int, optional): Multiple of masked_gaussian. Defaults to 1.
+
+    Returns:
+        torch.Tensor: Masked heatmap.
+    """
+    diameter = 2 * radius + 1
+
+    gaussian = np.ones((diameter, diameter)) * curriculum
+
+
+    x, y = int(center[0]), int(center[1])
+
+    height, width = heatmap.shape[0:2]
+
+    left, right = min(x, radius), min(width - x, radius + 1)
+    top, bottom = min(y, radius), min(height - y, radius + 1)
+
+    masked_heatmap = heatmap[y - top:y + bottom, x - left:x + right]
+    masked_gaussian = torch.from_numpy(
+        gaussian[radius - top:radius + bottom,
+        radius - left:radius + right]).to(heatmap.device,
+                                          torch.float32)
+
+    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:
+        #torch.max(masked_heatmap, masked_gaussian * k, out=masked_heatmap)
+        heatmap[y - top:y + bottom, x - left:x + right] = masked_gaussian
+    return heatmap
+
+
 def gaussian_radius(height, width, min_overlap=0.5):
     """
     Args:
@@ -45,6 +82,7 @@ def gaussian2D(shape, sigma=1):
 
 
 def draw_gaussian_to_heatmap(heatmap, center, radius, k=1, valid_mask=None):
+
     diameter = 2 * radius + 1
     gaussian = gaussian2D((diameter, diameter), sigma=diameter / 6)
 
@@ -67,6 +105,31 @@ def draw_gaussian_to_heatmap(heatmap, center, radius, k=1, valid_mask=None):
 
         torch.max(masked_heatmap, masked_gaussian * k, out=masked_heatmap)
     return heatmap
+
+def draw_mask_to_heatmap(heatmap, center, radius, k=1, valid_mask=None):
+    diameter = 2 * radius + 1
+    gaussian = np.ones((diameter, diameter)) * k
+
+    x, y = center[0], center[1]
+
+    height, width = heatmap.shape[0:2]
+
+    left, right = min(x, radius), min(width - x, radius + 1)
+    top, bottom = min(y, radius), min(height - y, radius + 1)
+
+    masked_heatmap = heatmap[y - top:y + bottom, x - left:x + right]
+    masked_gaussian = torch.from_numpy(
+        gaussian[radius - top:radius + bottom, radius - left:radius + right]
+    ).to(heatmap.device).float()
+
+    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:  # TODO debug
+        if valid_mask is not None:
+            cur_valid_mask = valid_mask[y - top:y + bottom, x - left:x + right]
+            masked_gaussian = masked_gaussian * cur_valid_mask.float()
+
+        heatmap[y - top:y + bottom, x - left:x + right] = masked_gaussian
+    return heatmap
+
 
 
 def _nms(heat, kernel=3):

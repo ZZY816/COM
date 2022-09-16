@@ -8,7 +8,7 @@ from ..utils import common_utils
 from .augmentor.data_augmentor import DataAugmentor
 from .processor.data_processor import DataProcessor
 from .processor.point_feature_encoder import PointFeatureEncoder
-
+import os
 
 class DatasetTemplate(torch_data.Dataset):
     def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, logger=None):
@@ -17,7 +17,17 @@ class DatasetTemplate(torch_data.Dataset):
         self.training = training
         self.class_names = class_names
         self.logger = logger
-        self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
+        data_root1 = '/media/didi/1.0TB/waymo'
+        data_root2 = '/nfs/dataset-s3-cargo-perception/data/pcd/waymo'
+        data_root3 = '/nfs/dataset-perception/andrewzhu_i/waymo_for_openPCDet/waymo'
+        root_candidate = [self.dataset_cfg.DATA_PATH, data_root1, data_root2, data_root3]
+
+
+        for root in root_candidate:
+            if os.path.exists(root):
+                self.root_path = Path(root)
+                break
+        #self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
         self.logger = logger
         if self.dataset_cfg is None or class_names is None:
             return

@@ -45,7 +45,7 @@ class SeparateHead(nn.Module):
         return ret_dict
 
 
-class CenterHead(nn.Module):
+class CurriculumCenterHead(nn.Module):
     def __init__(self, model_cfg, input_channels, num_class, class_names, grid_size, point_cloud_range, voxel_size,
                  predict_boxes_when_training=True):
         super().__init__()
@@ -61,6 +61,9 @@ class CenterHead(nn.Module):
         self.class_id_mapping_each_head = []
 
         self.epoch = 0
+        self.epoch_thredhold = self.model_cfg.TARGET_ASSIGNER_CONFIG.get('EPOCH_THRED', 100)
+        self.min_points = self.model_cfg.TARGET_ASSIGNER_CONFIG.get('MIN_POINTS', 1)
+
 
         for cur_class_names in self.model_cfg.CLASS_NAMES_EACH_HEAD:
             self.class_names_each_head.append([x for x in cur_class_names if x in class_names])
@@ -99,12 +102,12 @@ class CenterHead(nn.Module):
         self.build_losses()
 
     def build_losses(self):
-        self.add_module('hm_loss_func', loss_utils.FocalLossCenterNet())
+        self.add_module('hm_loss_func', loss_utils.FocalLossCenterCurriculum())
         self.add_module('reg_loss_func', loss_utils.RegLossCenterNet())
 
     def assign_target_of_single_head(
             self, num_classes, gt_boxes, feature_map_size, feature_map_stride, num_max_objs=500,
-            gaussian_overlap=0.1, min_radius=2
+            gaussian_overlap=0.1, min_radius=2, npgt=None
     ):
         """
         Args:
@@ -117,9 +120,15 @@ class CenterHead(nn.Module):
 
 
         heatmap = gt_boxes.new_zeros(num_classes, feature_map_size[1], feature_map_size[0])
+        heatmap_mask = gt_boxes.new_ones(num_classes, feature_map_size[1], feature_map_size[0])
+
+
+
         ret_boxes = gt_boxes.new_zeros((num_max_objs, gt_boxes.shape[-1] - 1 + 1))
         inds = gt_boxes.new_zeros(num_max_objs).long()
-        mask = gt_boxes.new_zeros(num_max_objs).long()
+        #mask = gt_boxes.new_zeros(num_max_objs).long()
+        mask = gt_boxes.new_zeros(num_max_objs)
+        radius_map = gt_boxes.new_zeros(num_max_objs, 4).long()
 
         x, y, z = gt_boxes[:, 0], gt_boxes[:, 1], gt_boxes[:, 2]
         coord_x = (x - self.point_cloud_range[0]) / self.voxel_size[0] / feature_map_stride
@@ -144,6 +153,11 @@ class CenterHead(nn.Module):
             if not (0 <= center_int[k][0] <= feature_map_size[0] and 0 <= center_int[k][1] <= feature_map_size[1]):
                 continue
 
+            num_points_in_gt = npgt[k]
+            if self.epoch <= self.epoch_thredhold and num_points_in_gt < self.min_points:
+                continue
+
+
             cur_class_id = (gt_boxes[k, -1] - 1).long()
             centernet_utils.draw_gaussian_to_heatmap(heatmap[cur_class_id], center[k], radius[k].item())
 
@@ -158,12 +172,21 @@ class CenterHead(nn.Module):
             if gt_boxes.shape[1] > 8:
                 ret_boxes[k, 8:] = gt_boxes[k, 7:-1]
 
-        return heatmap, ret_boxes, inds, mask
 
-    def assign_targets(self, gt_boxes, feature_map_size=None, **kwargs):
+
+            radius_map[k, 0] = cur_class_id
+            radius_map[k, 1] = center[k][0]
+            radius_map[k, 2] = center[k][1]
+            radius_map[k, 3] = radius[k]
+
+
+        return heatmap, ret_boxes, inds, mask, radius_map, heatmap_mask
+
+    def assign_targets(self, gt_boxes, feature_map_size=None, npgt=None, **kwargs):
         """
         Args:
             gt_boxes: (B, M, 8)
+            npgt: (B, M)
             range_image_polar: (B, 3, H, W)
             feature_map_size: (2) [H, W]
             spatial_cartesian: (B, 4, H, W)
@@ -181,18 +204,24 @@ class CenterHead(nn.Module):
             'target_boxes': [],
             'inds': [],
             'masks': [],
-            'heatmap_masks': []
+            'heatmap_masks': [],
+            'radius_map': [],
+            'heatmap_mask': []
         }
 
         all_names = np.array(['bg', *self.class_names])
 
+
         for idx, cur_class_names in enumerate(self.class_names_each_head):
-            heatmap_list, target_boxes_list, inds_list, masks_list = [], [], [], []
+            heatmap_list, target_boxes_list, inds_list, masks_list, radius_list, heatmap_mask_list = [], [], [], [], [], []
             for bs_idx in range(batch_size):
                 cur_gt_boxes = gt_boxes[bs_idx]
                 gt_class_names = all_names[cur_gt_boxes[:, -1].cpu().long().numpy()]
 
+                cur_npgt = npgt[bs_idx]
+
                 gt_boxes_single_head = []
+                npgt_single_head = []
 
                 for idx, name in enumerate(gt_class_names):
                     if name not in cur_class_names:
@@ -201,27 +230,42 @@ class CenterHead(nn.Module):
                     temp_box[-1] = cur_class_names.index(name) + 1
                     gt_boxes_single_head.append(temp_box[None, :])
 
+                    temp_npgt = cur_npgt[idx]
+                    npgt_single_head.append(temp_npgt)
+
+                assert len(npgt_single_head) == len(gt_boxes_single_head)
+
                 if len(gt_boxes_single_head) == 0:
                     gt_boxes_single_head = cur_gt_boxes[:0, :]
+                    npgt_single_head = cur_npgt[:0]
+
                 else:
                     gt_boxes_single_head = torch.cat(gt_boxes_single_head, dim=0)
+                    npgt_single_head = torch.tensor(npgt_single_head)
 
-                heatmap, ret_boxes, inds, mask = self.assign_target_of_single_head(
+                heatmap, ret_boxes, inds, mask, radius_map, heatmap_mask = self.assign_target_of_single_head(
                     num_classes=len(cur_class_names), gt_boxes=gt_boxes_single_head.cpu(),
                     feature_map_size=feature_map_size, feature_map_stride=target_assigner_cfg.FEATURE_MAP_STRIDE,
                     num_max_objs=target_assigner_cfg.NUM_MAX_OBJS,
                     gaussian_overlap=target_assigner_cfg.GAUSSIAN_OVERLAP,
                     min_radius=target_assigner_cfg.MIN_RADIUS,
+                    npgt=npgt_single_head.cpu()
                 )
                 heatmap_list.append(heatmap.to(gt_boxes_single_head.device))
                 target_boxes_list.append(ret_boxes.to(gt_boxes_single_head.device))
                 inds_list.append(inds.to(gt_boxes_single_head.device))
                 masks_list.append(mask.to(gt_boxes_single_head.device))
+                radius_list.append(radius_map.to(gt_boxes_single_head.device))
+                heatmap_mask_list.append(heatmap_mask.to(gt_boxes_single_head.device))
 
             ret_dict['heatmaps'].append(torch.stack(heatmap_list, dim=0))
             ret_dict['target_boxes'].append(torch.stack(target_boxes_list, dim=0))
             ret_dict['inds'].append(torch.stack(inds_list, dim=0))
             ret_dict['masks'].append(torch.stack(masks_list, dim=0))
+            ret_dict['radius_map'].append(torch.stack(radius_list, dim=0))
+            ret_dict['heatmap_mask'].append(torch.stack(heatmap_mask_list, dim=0))
+
+
         return ret_dict
 
     def sigmoid(self, x):
@@ -236,18 +280,20 @@ class CenterHead(nn.Module):
 
         tb_dict = {}
         loss = 0
-        confidence = 0
 
         for idx, pred_dict in enumerate(pred_dicts):
             pred_dict['hm'] = self.sigmoid(pred_dict['hm'])
-            hm_loss, avg_confidence = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx])
+            hm_loss, box_mask = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx],
+                                        target_dicts['radius_map'][idx], target_dicts['masks'][idx].clone(),
+                                        mask=target_dicts['heatmap_mask'][idx])
             hm_loss *= self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
 
             target_boxes = target_dicts['target_boxes'][idx]
             pred_boxes = torch.cat([pred_dict[head_name] for head_name in self.separate_head_cfg.HEAD_ORDER], dim=1)
 
+
             reg_loss = self.reg_loss_func(
-                pred_boxes, target_dicts['masks'][idx], target_dicts['inds'][idx], target_boxes
+                pred_boxes, box_mask, target_dicts['inds'][idx], target_boxes
             )
             loc_loss = (reg_loss * reg_loss.new_tensor(self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['code_weights'])).sum()
             loc_loss = loc_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['loc_weight']
@@ -256,11 +302,7 @@ class CenterHead(nn.Module):
             tb_dict['hm_loss_head_%d' % idx] = hm_loss.item()
             tb_dict['loc_loss_head_%d' % idx] = loc_loss.item()
 
-            confidence += avg_confidence
-        confidence = confidence/len(pred_dicts)
-
         tb_dict['rpn_loss'] = loss.item()
-        tb_dict['confidence'] = confidence.item()
         return loss, tb_dict
 
     def generate_predicted_boxes(self, batch_size, pred_dicts):
@@ -344,9 +386,11 @@ class CenterHead(nn.Module):
             pred_dicts.append(head(x))
 
         if self.training:
+
             target_dict = self.assign_targets(
                 data_dict['gt_boxes'], feature_map_size=spatial_features_2d.size()[2:],
-                feature_map_stride=data_dict.get('spatial_features_2d_strides', None)
+                feature_map_stride=data_dict.get('spatial_features_2d_strides', None),
+                npgt=data_dict['num_points_in_gt']
             )
             self.forward_ret_dict['target_dicts'] = target_dict
 

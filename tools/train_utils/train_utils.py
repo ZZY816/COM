@@ -73,7 +73,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
             batch_time.update(avg_batch_time)
             
             disp_dict.update({
-                'loss': loss.item(), 'lr': cur_lr, 'd_time': f'{data_time.val:.2f}({data_time.avg:.2f})',
+                'confidence': tb_dict['confidence'], 'loss': loss.item(), 'lr': cur_lr, 'd_time': f'{data_time.val:.2f}({data_time.avg:.2f})',
                 'f_time': f'{forward_time.val:.2f}({forward_time.avg:.2f})', 'b_time': f'{batch_time.val:.2f}({batch_time.avg:.2f})'
             })
             
