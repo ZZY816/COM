@@ -280,10 +280,12 @@ class CurriculumCenterHead(nn.Module):
 
         tb_dict = {}
         loss = 0
+        confidence = 0
+
 
         for idx, pred_dict in enumerate(pred_dicts):
             pred_dict['hm'] = self.sigmoid(pred_dict['hm'])
-            hm_loss, box_mask = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx],
+            hm_loss, box_mask, avg_confidence = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx],
                                         target_dicts['radius_map'][idx], target_dicts['masks'][idx].clone(),
                                         mask=target_dicts['heatmap_mask'][idx])
             hm_loss *= self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
@@ -302,7 +304,12 @@ class CurriculumCenterHead(nn.Module):
             tb_dict['hm_loss_head_%d' % idx] = hm_loss.item()
             tb_dict['loc_loss_head_%d' % idx] = loc_loss.item()
 
+            confidence += avg_confidence
+            confidence = confidence / len(pred_dicts)
+
         tb_dict['rpn_loss'] = loss.item()
+        tb_dict['confidence'] = confidence.item()
+
         return loss, tb_dict
 
     def generate_predicted_boxes(self, batch_size, pred_dicts):

@@ -290,7 +290,7 @@ def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
 
     num_obj = pos_inds.float().sum()
     avg_confidence = (pred * pos_inds).sum() / num_obj # the average prediction confidence of all objects in this head
-    print(avg_confidence)
+
     num_objects = 0
     for batch in range(batch_size):
         nonzero_idx = torch.where(radius_map[batch][:, 3] > 0)[0]  # non-zero index of the objects in current batch
@@ -333,7 +333,7 @@ def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
         loss = loss - neg_loss
     else:
         loss = loss - (pos_loss + neg_loss) / num_pos
-    return loss, box_mask
+    return loss, box_mask, avg_confidence
 
 
 def neg_loss_cornernet(pred, gt, mask=None):
