@@ -164,7 +164,8 @@ class DatasetTemplate(torch_data.Dataset):
         if self.training:
             assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
             gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
-            
+
+
             if 'calib' in data_dict:
                 calib = data_dict['calib']
             data_dict = self.data_augmentor.forward(
@@ -176,12 +177,22 @@ class DatasetTemplate(torch_data.Dataset):
             if 'calib' in data_dict:
                 data_dict['calib'] = calib
         if data_dict.get('gt_boxes', None) is not None:
+
             selected = common_utils.keep_arrays_by_name(data_dict['gt_names'], self.class_names)
+
             data_dict['gt_boxes'] = data_dict['gt_boxes'][selected]
             data_dict['gt_names'] = data_dict['gt_names'][selected]
+            data_dict['num_points_in_gt'] = data_dict['num_points_in_gt'][selected]
+            if data_dict['true_object'] is not None:
+                data_dict['true_object'] = data_dict['true_object'][selected]
+            assert len(data_dict['num_points_in_gt']) == len(data_dict['gt_names'])
+
             gt_classes = np.array([self.class_names.index(n) + 1 for n in data_dict['gt_names']], dtype=np.int32)
+
             gt_boxes = np.concatenate((data_dict['gt_boxes'], gt_classes.reshape(-1, 1).astype(np.float32)), axis=1)
             data_dict['gt_boxes'] = gt_boxes
+
+
 
             if data_dict.get('gt_boxes2d', None) is not None:
                 data_dict['gt_boxes2d'] = data_dict['gt_boxes2d'][selected]
@@ -197,12 +208,14 @@ class DatasetTemplate(torch_data.Dataset):
             new_index = np.random.randint(self.__len__())
             return self.__getitem__(new_index)
 
+
         data_dict.pop('gt_names', None)
 
         return data_dict
 
     @staticmethod
     def collate_batch(batch_list, _unused=False):
+
         data_dict = defaultdict(list)
         for cur_sample in batch_list:
             for key, val in cur_sample.items():
@@ -234,6 +247,14 @@ class DatasetTemplate(torch_data.Dataset):
                         num_points_in_gt[k, :val[k].__len__()] = val[k]
 
                     ret[key] = num_points_in_gt
+
+                elif key in ['true_object']:
+                    max_num = max([x.shape[0] for x in val])
+                    true_object = np.zeros((batch_size, max_num))
+                    for k in range(batch_size):
+                        true_object[k, :val[k].__len__()] = val[k]
+
+                    ret[key] = true_object
 
                 elif key in ['roi_boxes']:
                     max_gt = max([x.shape[1] for x in val])

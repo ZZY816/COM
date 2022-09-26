@@ -102,7 +102,7 @@ class CurriculumCenterHead(nn.Module):
         self.build_losses()
 
     def build_losses(self):
-        self.add_module('hm_loss_func', loss_utils.FocalLossCenterCurriculum())
+        self.add_module('hm_loss_func', loss_utils.FocalLossCenterCurriculum(self.model_cfg))
         self.add_module('reg_loss_func', loss_utils.RegLossCenterNet())
 
     def assign_target_of_single_head(
@@ -212,6 +212,9 @@ class CurriculumCenterHead(nn.Module):
         all_names = np.array(['bg', *self.class_names])
 
 
+        assert gt_boxes.shape[:-1] == npgt.shape
+
+
         for idx, cur_class_names in enumerate(self.class_names_each_head):
             heatmap_list, target_boxes_list, inds_list, masks_list, radius_list, heatmap_mask_list = [], [], [], [], [], []
             for bs_idx in range(batch_size):
@@ -274,7 +277,6 @@ class CurriculumCenterHead(nn.Module):
 
     def get_loss(self):
 
-
         pred_dicts = self.forward_ret_dict['pred_dicts']
         target_dicts = self.forward_ret_dict['target_dicts']
 
@@ -287,7 +289,7 @@ class CurriculumCenterHead(nn.Module):
             pred_dict['hm'] = self.sigmoid(pred_dict['hm'])
             hm_loss, box_mask, avg_confidence = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx],
                                         target_dicts['radius_map'][idx], target_dicts['masks'][idx].clone(),
-                                        mask=target_dicts['heatmap_mask'][idx])
+                                        mask=target_dicts['heatmap_mask'][idx], epoch=self.epoch)
             hm_loss *= self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
 
             target_boxes = target_dicts['target_boxes'][idx]

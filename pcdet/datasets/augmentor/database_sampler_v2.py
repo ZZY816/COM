@@ -13,7 +13,7 @@ from ...utils import box_utils, common_utils, calibration_kitti
 from pcdet.datasets.kitti.kitti_object_eval_python import kitti_common
 
 
-class DataBaseSampler(object):
+class DataBaseSampler_v2(object):
     def __init__(self, root_path, sampler_cfg, class_names, logger=None):
         self.root_path = root_path
         self.class_names = class_names
@@ -61,11 +61,12 @@ class DataBaseSampler(object):
 
 
             self.sample_class_num[class_name] = sample_num
-            self.sample_groups[class_name] = {
-                'sample_num': sample_num,
-                'pointer': len(self.db_infos[class_name]),
-                'indices': np.arange(len(self.db_infos[class_name]))
-            }
+            self.sample_groups[class_name] = self.split_groups(self.db_infos, class_name, sample_num)
+            # self.sample_groups[class_name] = {
+            #     'sample_num': sample_num,
+            #     'pointer': len(self.db_infos[class_name]),
+            #     'indices': np.arange(len(self.db_infos[class_name]))
+            # }
 
     def __getstate__(self):
         d = dict(self.__dict__)
@@ -132,6 +133,59 @@ class DataBaseSampler(object):
                 db_infos[name] = filtered_infos
 
         return db_infos
+
+    def split_groups(self, db_infos, class_name, sample_num):
+        class_dict = db_infos[class_name]
+        num_points_indices = np.array([sample['num_points_in_gt'] for sample in class_dict])
+
+        easy_indices = np.where(num_points_indices >= 100)[0]
+        medium_indices = np.where((num_points_indices < 100) & (num_points_indices >= 50))[0]
+        hard_indices = np.where(num_points_indices < 50)[0]
+
+        indices_list = [easy_indices, medium_indices, hard_indices]
+        pointer_list = [len(easy_indices), len(medium_indices), len(hard_indices)]
+
+        sample_group = {
+            'sample_num': sample_num,
+            'pointer': pointer_list,
+            'indices': indices_list
+        }
+
+        return sample_group
+
+
+    def sample_with_fixed_number_v2(self, class_name, sample_group, sample_num_list=None):
+        """
+        Args:
+            class_name:
+            sample_group:
+        Returns:
+
+        """
+
+        total_sample_num, pointer_list, indices_list = int(sample_group['sample_num']), sample_group['pointer'], sample_group['indices']
+
+        sample_num_list = np.ones(len(pointer_list) * total_sample_num)
+        sampled_dict = []
+
+        for i in range(len(pointer_list)):
+            sample_num = int(sample_num_list[i] * total_sample_num)
+            if sample_num == 0:
+                continue
+            pointer = pointer_list[i]
+            indices = indices_list[i]
+
+            if pointer >= len(indices):
+                indices = np.random.permutation(indices)
+                pointer = 0
+
+            sampled_dict.extend([self.db_infos[class_name][idx] for idx in indices[pointer: pointer + sample_num]])
+            pointer += sample_num
+
+            sample_group['pointer'][i] = pointer
+            sample_group['indices'][i] = indices
+
+        return sampled_dict
 
 
 
@@ -375,8 +429,8 @@ class DataBaseSampler(object):
         gt_boxes_mask = data_dict['gt_boxes_mask']
         gt_boxes = data_dict['gt_boxes'][gt_boxes_mask]
         gt_names = data_dict['gt_names'][gt_boxes_mask]
-
         gt_npgt = data_dict['num_points_in_gt'][gt_boxes_mask]
+        gt_true_object = data_dict['true_object'][gt_boxes_mask]
 
         points = data_dict['points']
         if self.sampler_cfg.get('USE_ROAD_PLANE', False) and mv_height is None:
@@ -427,6 +481,8 @@ class DataBaseSampler(object):
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
         sampled_gt_npgt = np.array([x['num_points_in_gt'] for x in total_valid_sampled_dict])
+        sampled_true_object = np.ones_like(sampled_gt_npgt) * 2
+
 
         if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False) or obj_points.shape[-1] != points.shape[-1]:
             if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False):
@@ -449,13 +505,14 @@ class DataBaseSampler(object):
         gt_boxes = np.concatenate([gt_boxes, sampled_gt_boxes], axis=0)
 
         gt_npgt = np.concatenate([gt_npgt, sampled_gt_npgt], axis=0)
-
+        gt_true_object = np.concatenate([gt_true_object, sampled_true_object], axis=0)
 
         assert gt_names.shape == gt_npgt.shape
         data_dict['gt_boxes'] = gt_boxes
         data_dict['gt_names'] = gt_names
         data_dict['points'] = points
         data_dict['num_points_in_gt'] = gt_npgt
+        data_dict['true_object'] = gt_true_object
 
         if self.img_aug_type is not None:
             data_dict = self.copy_paste_to_image(img_aug_gt_dict, data_dict, points)
@@ -484,14 +541,15 @@ class DataBaseSampler(object):
         # print('db_info', self.db_infos['Vehicle'][0])
         # exit()
 
+
+
         for class_name, sample_group in self.sample_groups.items():
             if self.limit_whole_scene:
                 num_gt = np.sum(class_name == gt_names)
                 sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
             if int(sample_group['sample_num']) > 0:
 
-
-                sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+                sampled_dict = self.sample_with_fixed_number_v2(class_name, sample_group)
 
                 sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
 

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from . import box_utils
 from ..models.model_utils import centernet_utils
 
+
 class SigmoidFocalClassificationLoss(nn.Module):
     """
     Sigmoid focal cross entropy loss.
@@ -261,7 +262,7 @@ def compute_fg_mask(gt_boxes2d, shape, downsample_factor=1, device=torch.device(
     return fg_mask
 
 
-def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
+def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None, epoch=None):
     """
     Refer to https://github.com/tianweiy/CenterPoint.
     Modified focal loss. Exactly the same as CornerNet. Runs faster and costs a little bit more memory
@@ -271,9 +272,6 @@ def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
         mask: (batch x h x w)
     Returns:
     """
-
-
-
 
     pos_inds = gt.eq(1).float()
     neg_inds = gt.lt(1).float()
@@ -289,7 +287,7 @@ def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
 
 
     num_obj = pos_inds.float().sum()
-    avg_confidence = (pred * pos_inds).sum() / num_obj # the average prediction confidence of all objects in this head
+    avg_confidence = (pred * pos_inds).sum() / num_obj   # the average prediction confidence of all objects in this head
 
     num_objects = 0
     for batch in range(batch_size):
@@ -304,13 +302,26 @@ def neg_loss_curriculum(pred, gt, radius_map, box_mask, mask=None):
 
             pred_confidence = pred[batch, cur_class_id, center_y, center_x]   # the prediction confidence of current object. Pay attention to the order of x and y.
             assert pos_inds[batch, cur_class_id, center_y, center_x] == 1
-            if pred_confidence.item() < avg_confidence.item():
-                box_mask[batch, idx] = 0.5  # change the weight for bbox regression
-                centernet_utils.draw_mask_to_heatmap(mask[batch, cur_class_id], center, radius, k=1) # draw weight mask for current object
-                assert mask[batch, cur_class_id, center_y, center_x] == 1
-            else:
-                assert mask[batch, cur_class_id, center_y, center_x] == 1
+
+            #threshold = avg_confidence.item()/2  # threshold for determining easy and hard instances
+            #weight = 0.5   # weight for controlling curriculum
+
+            threshold = avg_confidence.item() * 0.3  # threshold for determining easy and hard instances
+            elongation = -10
+            height = 1
+            weight = height / (1 + np.exp(elongation * (pred_confidence.item() - threshold))) + 1 - height / 2
+            #weight = 1.5
+
+            #if pred_confidence.item() < threshold and epoch >= 1:
+            if epoch >= 1:
+            #if pred_confidence.item() > threshold and epoch >= 1:
+                box_mask[batch, idx] = weight  # change the weight for bbox regression
+                centernet_utils.draw_mask_to_heatmap(mask[batch, cur_class_id], center, radius, k=weight)  # draw weight mask for current object
+                assert mask[batch, cur_class_id, center_y, center_x] == weight
+
             num_objects += 1
+
+
     #print(num_objects, num_obj)
     #assert num_objects == num_obj
 
@@ -395,12 +406,116 @@ class FocalLossCenterCurriculum(nn.Module):
     """
     Refer to https://github.com/tianweiy/CenterPoint
     """
-    def __init__(self):
+    def __init__(self, model_config):
         super(FocalLossCenterCurriculum, self).__init__()
-        self.neg_loss = neg_loss_curriculum
+        #self.neg_loss = neg_loss_curriculum
+        self.model_config = model_config
+        self.curriculum = self.model_config.get('LOSS_CURRICULUM', None)
+        if self.curriculum is not None:
+            self.threshold = self.curriculum['THRESHOLD']
+            self.elongation = self.curriculum['ELONGATION']
+            self.height = self.curriculum['HEIGHT']
+        else:
+            self.threshold = 1
+            self.elongation = -10
+            self.height = 1
 
-    def forward(self, out, target, radius_map, box_mask, mask=None):
-        return self.neg_loss(out, target, radius_map, box_mask, mask=mask)
+        self.fix_threshold = self.curriculum.get('FIX', False)
+        self.start_epoch = self.curriculum.get('START', 1)
+        self.end_epoch = self.curriculum.get('END', 100)
+        self.avg_confidence = 0.0
+        self.alpha = self.curriculum.get('ALPHA', 1.0)
+
+    def forward(self, out, target, radius_map, box_mask, mask=None, epoch=None):
+
+        return self.neg_loss(out, target, radius_map, box_mask, mask=mask, epoch=epoch)
+
+    def neg_loss(self, pred, gt, radius_map, box_mask, mask=None, epoch=None):
+        """
+            Refer to https://github.com/tianweiy/CenterPoint.
+            Modified focal loss. Exactly the same as CornerNet. Runs faster and costs a little bit more memory
+            Args:
+                pred: (batch x c x h x w)
+                gt: (batch x c x h x w)
+                mask: (batch x h x w)
+            Returns:
+            """
+
+        pos_inds = gt.eq(1).float()
+        neg_inds = gt.lt(1).float()
+
+        batch_size = pos_inds.shape[0]
+
+        neg_weights = torch.pow(1 - gt, 4)
+
+        loss = 0
+
+        pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
+        neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
+
+        num_obj = pos_inds.float().sum()
+        avg_confidence = (pred * pos_inds).sum() / num_obj  # the average prediction confidence of all objects in this head
+        #print('avg_confidence', self.avg_confidence)
+        self.avg_confidence = self.alpha * avg_confidence.item() + (1-self.alpha) * self.avg_confidence
+        #print('avg_confidence', self.avg_confidence)
+        #print(self.alpha)
+        # print('batch_size', batch_size)
+        #exit()
+        num_objects = 0
+        for batch in range(batch_size):
+            nonzero_idx = torch.where(radius_map[batch][:, 3] > 0)[0]  # non-zero index of the objects in current batch
+            for i in nonzero_idx:
+                idx = i.item()
+                cur_class_id = radius_map[batch, idx, 0].item()  # the class of current object
+                center_x = radius_map[batch, idx, 1].item()  # the center x of current object
+                center_y = radius_map[batch, idx, 2].item()  # the center y of current object
+                center = (center_x, center_y)
+                radius = radius_map[batch, idx, 3].item()  # the radius of the gaussian circle of current object
+
+                pred_confidence = pred[
+                    batch, cur_class_id, center_y, center_x]  # the prediction confidence of current object. Pay attention to the order of x and y.
+                assert pos_inds[batch, cur_class_id, center_y, center_x] == 1
+
+                # threshold = avg_confidence.item()/2  # threshold for determining easy and hard instances
+                # weight = 0.5   # weight for controlling curriculum
+
+                threshold = self.avg_confidence * self.threshold  # threshold for determining easy and hard instances
+                if self.fix_threshold:
+                    threshold = self.threshold
+                elongation = self.elongation
+                height = self.height
+                weight = height / (1 + np.exp(elongation * (pred_confidence.item() - threshold))) + 1 - height / 2
+                # weight = 1.5
+
+                # if pred_confidence.item() < threshold and epoch >= 1:
+                if self.start_epoch <= epoch <= self.end_epoch:
+                    # if pred_confidence.item() > threshold and epoch >= 1:
+                    box_mask[batch, idx] = weight  # change the weight for bbox regression
+                    centernet_utils.draw_mask_to_heatmap(mask[batch, cur_class_id], center, radius,
+                                                         k=weight)  # draw weight mask for current object
+                    assert mask[batch, cur_class_id, center_y, center_x] == weight
+
+                num_objects += 1
+
+        # print(num_objects, num_obj)
+        # assert num_objects == num_obj
+
+        if mask is not None:
+            mask = mask[:, None, :, :].float()
+            pos_loss = pos_loss * mask
+            neg_loss = neg_loss * mask
+            num_pos = (pos_inds.float() * mask).sum()
+        else:
+            num_pos = pos_inds.float().sum()
+
+        pos_loss = pos_loss.sum()
+        neg_loss = neg_loss.sum()
+
+        if num_pos == 0:
+            loss = loss - neg_loss
+        else:
+            loss = loss - (pos_loss + neg_loss) / num_pos
+        return loss, box_mask, avg_confidence
 
 
 def _reg_loss(regr, gt_regr, mask):

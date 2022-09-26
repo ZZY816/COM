@@ -1,7 +1,8 @@
 import argparse
 import glob
+import os.path
 from pathlib import Path
-
+import pickle
 try:
     import open3d
     from visual_utils import open3d_vis_utils as V
@@ -78,37 +79,56 @@ def parse_config():
 
 
 def main():
-    args, cfg = parse_config()
+    # args, cfg = parse_config()
     logger = common_utils.create_logger()
     logger.info('-----------------Quick Demo of OpenPCDet-------------------------')
 
-    # demo_dataset = DemoDataset(
-    #     dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
-    #     root_path=Path(args.data_path), ext=args.ext, logger=logger
-    # )
-    demo_dataset = WaymoDataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
-        root_path=Path(args.data_path), logger=logger)
-    logger.info(f'Total number of samples: \t{len(demo_dataset)}')
+    # demo_dataset = WaymoDataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
+    #     root_path=Path(args.data_path), logger=logger)
+    # logger.info(f'Total number of samples: \t{len(demo_dataset)}')
 
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=demo_dataset)
-    model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=True)
-    model.cuda()
-    model.eval()
-    with torch.no_grad():
-        for idx, data_dict in enumerate(demo_dataset):
-            logger.info(f'Visualized sample index: \t{idx + 1}')
-            data_dict = demo_dataset.collate_batch([data_dict])
-            load_data_to_gpu(data_dict)
-            pred_dicts, _ = model.forward(data_dict)
-            # print(data_dict['points'].shape, data_dict['points'][:, 1:].shape)
-            # exit()
-            V.draw_scenes(
-                points=data_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
-                ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels']
-            )
+    root = '/media/didi/1.0TB/waymo'
+    file = 'dbinfos_car_by_num_points_in_gt_distance.pkl'
+    info_path = os.path.join(root, file)
+    with open(info_path, 'rb') as f:
+        db_infos = pickle.load(f)
+    vis_info = db_infos['10_20'][:-1]
+    show_num = 1
+    distance_amplify = 1.5
 
-            if not OPEN3D_FLAG:
-                mlab.show(stop=True)
+    for i in range(0, len(vis_info), show_num):
+        npgt_list = []
+        gt_box_list = []
+        points_list = []
+        for j in range(i, i+show_num):
+            point_path = os.path.join(root, vis_info[j]['path'])
+            num_points_in_gt = vis_info[j]['num_points_in_gt']
+            gt_box = vis_info[j]['box3d_lidar']
+
+            obj_points = np.fromfile(str(point_path), dtype=np.float32).reshape(
+                [-1, 5])
+            if obj_points.shape[0] != num_points_in_gt:
+                obj_points = np.fromfile(str(point_path), dtype=np.float64).reshape(
+                    [-1, 5])
+
+            obj_points[:, 2] += gt_box[2].astype(np.float32)
+            obj_points[:, :2] += gt_box[:2].astype(np.float32) * distance_amplify
+
+            gt_box[:2] = gt_box[:2] * distance_amplify
+
+            gt_box = torch.from_numpy(gt_box).float().unsqueeze(0)
+            npgt_list.append(num_points_in_gt)
+            points_list.append(obj_points)
+            gt_box_list.append(gt_box)
+
+        all_obj_points = np.concatenate(points_list, axis=0)
+        all_npgt = np.array(npgt_list)
+        all_boxes = torch.concat(gt_box_list, dim=0)
+
+        print('Current_index:', i)
+        V.draw_scenes(
+            points=all_obj_points, gt_boxes=all_boxes
+        )
 
     logger.info('Demo done.')
 

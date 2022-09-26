@@ -402,17 +402,22 @@ class WaymoDataset(DatasetTemplate):
                 gt_boxes_lidar = gt_boxes_lidar[mask]
                 annos['num_points_in_gt'] = annos['num_points_in_gt'][mask]
 
-
+                annos['true_object'] = np.ones_like(annos['num_points_in_gt'])
 
             input_dict.update({
                 'gt_names': annos['name'],
                 'gt_boxes': gt_boxes_lidar,
-                'num_points_in_gt': annos.get('num_points_in_gt', None)
+                'num_points_in_gt': annos.get('num_points_in_gt', None),
+                'true_object': annos.get('true_object', None)
             })
 
         data_dict = self.prepare_data(data_dict=input_dict)
         data_dict['metadata'] = info.get('metadata', info['frame_id'])
 
+
+        assert len(data_dict['gt_boxes']) == len(data_dict['num_points_in_gt'])
+        if self.training:
+            assert len(data_dict['gt_boxes']) == len(data_dict['true_object'])
 
 
 
@@ -420,6 +425,9 @@ class WaymoDataset(DatasetTemplate):
             data_dict.pop('num_points_in_gt', None)
         else:
             input_dict['num_points_in_gt'] = np.array(input_dict['num_points_in_gt'])
+
+        if not self.training:
+            data_dict.pop('true_object', None)
 
 
         return data_dict

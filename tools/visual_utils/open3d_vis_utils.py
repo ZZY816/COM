@@ -46,8 +46,8 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scor
     vis = open3d.visualization.Visualizer()
     vis.create_window()
 
-    vis.get_render_option().point_size = 1.0
-    vis.get_render_option().background_color = np.zeros(3)
+    vis.get_render_option().point_size = 2.0
+    vis.get_render_option().background_color = np.zeros(3) + 1
 
     # draw origin
     if draw_origin:
@@ -59,7 +59,7 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scor
 
     vis.add_geometry(pts)
     if point_colors is None:
-        pts.colors = open3d.utility.Vector3dVector(np.ones((points.shape[0], 3)))
+        pts.colors = open3d.utility.Vector3dVector(np.ones((points.shape[0], 3)) * 0.5)
     else:
         pts.colors = open3d.utility.Vector3dVector(point_colors)
 
@@ -93,7 +93,8 @@ def translate_boxes_to_open3d_instance(gt_boxes):
 
     # import ipdb; ipdb.set_trace(context=20)
     lines = np.asarray(line_set.lines)
-    lines = np.concatenate([lines, np.array([[1, 4], [7, 6]])], axis=0)
+
+    #lines = np.concatenate([lines, np.array([[1, 4], [7, 6]])], axis=0)
 
     line_set.lines = open3d.utility.Vector2iVector(lines)
 
