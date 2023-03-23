@@ -1,2 +1,2 @@
-## Curricular Object Manipulation in LiDAR-based Object Detection
-# Accepted by CVPR 2023
+# Curricular Object Manipulation in LiDAR-based Object Detection
+Accepted by CVPR 2023
