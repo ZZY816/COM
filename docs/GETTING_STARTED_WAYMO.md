@@ -1,5 +1,5 @@
 # Getting Started
-The model configs of our COM are located within [tools/cfgs](../tools/cfgs/waymo_models/com) for different datasets. 
+The model configs of our COM are located within [tools/cfgs/waymo_models/com](../tools/cfgs/waymo_models/com) for different datasets. 
 ## Dataset Preparation
 * Please download the official [Waymo Open Dataset](https://waymo.com/open/download/), 
 including the training data `training_0000.tar~training_0031.tar` and the validation 
