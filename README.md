@@ -13,6 +13,6 @@ which first clusters objects in ground-truth database based on well-designed heu
 - [Getting Started on Waymo](docs/GETTING_STARTED_WAYMO.md)
 
 ## TODO list
-- [ ] Support the training of KITTI Dataset
-- [ ] Support the training of NuScenes Dataset
+- [ ] Support the training on KITTI Dataset
+- [ ] Support the training on NuScenes Dataset
 - [ ] Support more state-of-the-art detectors
