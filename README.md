@@ -16,3 +16,9 @@ which first clusters objects in ground-truth database based on well-designed heu
 - [ ] Support the training on KITTI Dataset
 - [ ] Support the training on NuScenes Dataset
 - [ ] Support more state-of-the-art detectors
+
+## Acknowledgement
+Our code is based on the following repos.
+- [OpenPCDet](https://github.com/open-mmlab/OpenPCDet)
+- [MMDetection3D](https://github.com/open-mmlab/mmdetection3d)
+- [CenterPoint](https://github.com/tianweiy/CenterPoint)
