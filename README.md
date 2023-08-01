@@ -11,6 +11,6 @@ which first clusters objects in ground-truth database based on well-designed heu
 ## **Usage**
 1. **Environment**
 
-    Please follow the official environment installation [[**document**](https://github.com/open-mmlab/OpenPCDet/blob/master/docs/INSTALL.md)] of OpenPCDet.
+    Please follow the official environment [[**installation**](https://github.com/open-mmlab/OpenPCDet/blob/master/docs/INSTALL.md)] of OpenPCDet.
   
 2. **Dataset preparation**
