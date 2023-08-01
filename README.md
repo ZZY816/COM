@@ -1,4 +1,5 @@
-# **CVPR2023 : Curricular Object Manipulation in LiDAR-based Object Detection**
+# **CVPR2023 : Curricular Object Manipulation 
+# in LiDAR-based Object Detection**
 
 This repository is the official PyTorch implementation of our COM. [[**arXiv**](https://arxiv.org/abs/2304.04248)]
 
