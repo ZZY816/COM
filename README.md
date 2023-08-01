@@ -9,8 +9,10 @@ loss design, we propose the COMLoss to dynamically predict object-level difficul
 which first clusters objects in ground-truth database based on well-designed heuristics. Group-level difficulties rather than individual ones are then predicted and updated during training for stable results. Model performance and generalization capabilities can be improved by sampling and augmenting progressively more difficult objects into the training samples. Extensive experiments and ablation studies reveal the superior and generality of the proposed framework.
 
 ## Overview
-1. **Environment**
+- [Installation](docs/INSTALL.md)
+- [Getting Started on Waymo](docs/GETTING_STARTED_WAYMO.md)
 
-    Please follow the official environment [[**installation**](https://github.com/open-mmlab/OpenPCDet/blob/master/docs/INSTALL.md)] of OpenPCDet.
-  
-2. **Dataset preparation**
+## TODO list
+- [ ] Support the training of KITTI Dataset
+- [ ] Support the training of NuScenes Dataset
+- [ ] Support more state-of-the-art detectors
